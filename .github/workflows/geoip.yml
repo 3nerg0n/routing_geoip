@@ -1,9 +1,9 @@
-name: Build GeoIP Manual Config
+name: Build GeoIP Final
 on:
   workflow_dispatch:
   push:
     branches: [ master, main ]
-    paths: [ 'geoip/**', 'config.json' ]
+    paths: [ 'geoip/**' ]
 
 permissions:
   contents: write
@@ -28,7 +28,7 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Очистка IP через Python (гарантия от пустого файла)
+      # ШАГ 1: Очистка IP и приведение тегов к нижнему регистру
       - name: Clean IP files
         run: |
           python3 -c "
@@ -48,37 +48,40 @@ jobs:
                       line += '/128' if ':' in line else '/32'
                   cleaned.append(line)
               if cleaned:
-                  with open(os.path.join(dst, fname), 'w', encoding='utf-8') as f:
+                  # Сохраняем имя файла в нижнем регистре (стандарт)
+                  new_name = fname.lower()
+                  with open(os.path.join(dst, new_name), 'w', encoding='utf-8') as f:
                       f.write('\n'.join(cleaned) + '\n')
-                  print(f'File {fname}: {len(cleaned)} IPs saved')
+                  print(f'File {new_name}: {len(cleaned)} IPs saved')
           "
 
-      # ШАГ 2: Сборка с твоим config.json
-      - name: Build geoip.dat
+      # ШАГ 2: Генерация config.json
+      - name: Generate Config
         run: |
-          # Копируем твой ручной конфиг в папку сборщика
-          cp main/config.json builder/config.json
-          
           cd builder
-          # Запускаем сборку
-          go run ./ convert -c config.json
-          
-          # Проверка результата
-          mkdir -p ../release
-          if [ -f "output/dat/geoip.dat" ]; then
-            cp output/dat/geoip.dat ../release/
-            size=$(stat -c%s "../release/geoip.dat")
-            echo "--- Final size: $size bytes ---"
-            if [ $size -le 700 ]; then 
-              echo "ERROR: geoip.dat is still empty (676 bytes)!"
-              exit 1
-            fi
-          else
-            echo "ERROR: output/dat/geoip.dat not found!"
-            exit 1
-          fi
+          echo '{"input": [' > config.json
+          FIRST=true
+          for f in data/*; do
+            name=$(basename "$f")
+            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
+            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"./data/$name\"}}" >> config.json
+          done
+          # Добавляем стандартный блок private
+          echo ',{"type": "private", "action": "add"}' >> config.json
+          echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
 
-      # ШАГ 3: Публикация
+      # ШАГ 3: Сборка
+      - name: Build
+        run: |
+          cd builder
+          go build -o geoip_tool
+          ./geoip_tool convert -c config.json
+          mkdir -p ../release
+          cp output/dat/geoip.dat ../release/
+          size=$(stat -c%s "../release/geoip.dat")
+          echo "Final size: $size bytes"
+
+      # ШАГ 4: Публикация
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
