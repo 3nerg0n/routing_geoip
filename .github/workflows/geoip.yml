@@ -28,13 +28,14 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Очистка IP через Python (самый надежный метод)
+      # ШАГ 1: Идеальная очистка IP через Python
+      # Мы сохраняем файлы БЕЗ расширения .txt, так как имя файла станет тегом
       - name: Clean IP files
         run: |
           python3 -c "
           import os, re
           src = 'main/geoip'
-          dst = 'cleaned_txt'
+          dst = 'builder/geoip_data'
           os.makedirs(dst, exist_ok=True)
           for fname in os.listdir(src):
               if os.path.isdir(os.path.join(src, fname)): continue
@@ -48,41 +49,68 @@ jobs:
                       line += '/128' if ':' in line else '/32'
                   cleaned.append(line)
               if cleaned:
-                  with open(os.path.join(dst, fname + '.txt'), 'w', encoding='utf-8') as f:
+                  # Сохраняем файл с оригинальным именем (SberBank, RU и т.д.)
+                  with open(os.path.join(dst, fname), 'w', encoding='utf-8') as f:
                       f.write('\n'.join(cleaned) + '\n')
                   print(f'File {fname}: {len(cleaned)} IPs saved')
           "
 
-      # ШАГ 2: Генерация config.json и сборка
-      - name: Build geoip.dat
+      # ШАГ 2: Генерация ПРАВИЛЬНОГО config.json
+      # Используем тип v2raygeoip для папки целиком
+      - name: Generate Config
         run: |
-          # Генерируем конфиг
-          echo '{"input": [' > config.json
-          FIRST=true
-          for f in cleaned_txt/*.txt; do
-            filename=$(basename "$f")
-            tag="${filename%.txt}"
-            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"$(realpath $f)\"}}" >> config.json
-          done
-          # ВАЖНО: используем outputName вместо uri
-          echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
-          
+          cd builder
+          cat <<EOF > config.json
+          {
+            "input": [
+              {
+                "type": "v2raygeoip",
+                "action": "add",
+                "args": {
+                  "uri": "./geoip_data"
+                }
+              },
+              {
+                "type": "private",
+                "action": "add"
+              }
+            ],
+            "output": [
+              {
+                "type": "v2rayGeoIPDat",
+                "action": "output",
+                "args": {
+                  "outputName": "geoip.dat"
+                }
+              }
+            ]
+          }
+          EOF
           echo "--- Generated config.json ---"
           cat config.json
 
+      # ШАГ 3: Сборка
+      - name: Build geoip.dat
+        run: |
           cd builder
-          go build -o geoip_tool
-          ./geoip_tool convert -c ../config.json
+          go run ./ convert -c config.json
           
           # Проверка результата
           mkdir -p ../release
-          cp output/dat/geoip.dat ../release/
-          size=$(stat -c%s "../release/geoip.dat")
-          echo "--- Final size: $size bytes ---"
-          if [ $size -le 700 ]; then echo "ERROR: geoip.dat is still empty!"; exit 1; fi
+          if [ -f "output/dat/geoip.dat" ]; then
+            cp output/dat/geoip.dat ../release/
+            size=$(stat -c%s "../release/geoip.dat")
+            echo "--- Final size: $size bytes ---"
+            if [ $size -le 1000 ]; then 
+              echo "ERROR: geoip.dat is too small! Something went wrong."
+              exit 1
+            fi
+          else
+            echo "ERROR: output/dat/geoip.dat not found!"
+            exit 1
+          fi
 
-      # ШАГ 3: Публикация
+      # ШАГ 4: Публикация
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
