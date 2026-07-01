@@ -1,4 +1,4 @@
-name: Build GeoIP Final Fix
+name: Build GeoIP Hydra Style
 on:
   workflow_dispatch:
   push:
@@ -29,13 +29,12 @@ jobs:
           go-version: '>=1.21'
 
       # ШАГ 1: Идеальная очистка IP через Python
-      # Мы сохраняем файлы БЕЗ расширения .txt, так как имя файла станет тегом
       - name: Clean IP files
         run: |
           python3 -c "
           import os, re
           src = 'main/geoip'
-          dst = 'builder/geoip_data'
+          dst = 'builder/data_input'
           os.makedirs(dst, exist_ok=True)
           for fname in os.listdir(src):
               if os.path.isdir(os.path.join(src, fname)): continue
@@ -49,43 +48,26 @@ jobs:
                       line += '/128' if ':' in line else '/32'
                   cleaned.append(line)
               if cleaned:
-                  # Сохраняем файл с оригинальным именем (SberBank, RU и т.д.)
                   with open(os.path.join(dst, fname), 'w', encoding='utf-8') as f:
                       f.write('\n'.join(cleaned) + '\n')
                   print(f'File {fname}: {len(cleaned)} IPs saved')
           "
 
-      # ШАГ 2: Генерация ПРАВИЛЬНОГО config.json
-      # Используем тип v2raygeoip для папки целиком
+      # ШАГ 2: Генерация config.json (тип plaintext - это стандарт Loyalsoldier)
       - name: Generate Config
         run: |
           cd builder
-          cat <<EOF > config.json
-          {
-            "input": [
-              {
-                "type": "v2raygeoip",
-                "action": "add",
-                "args": {
-                  "uri": "./geoip_data"
-                }
-              },
-              {
-                "type": "private",
-                "action": "add"
-              }
-            ],
-            "output": [
-              {
-                "type": "v2rayGeoIPDat",
-                "action": "output",
-                "args": {
-                  "outputName": "geoip.dat"
-                }
-              }
-            ]
-          }
-          EOF
+          echo '{"input": [' > config.json
+          FIRST=true
+          for f in data_input/*; do
+            name=$(basename "$f")
+            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
+            echo "{\"type\": \"plaintext\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"./data_input/$name\"}}" >> config.json
+          done
+          # Добавляем стандартный блок private и вывод
+          echo ',{"type": "private", "action": "add"}' >> config.json
+          echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
+          
           echo "--- Generated config.json ---"
           cat config.json
 
@@ -93,6 +75,7 @@ jobs:
       - name: Build geoip.dat
         run: |
           cd builder
+          # Запускаем сборку через go run (как в hydraponique)
           go run ./ convert -c config.json
           
           # Проверка результата
@@ -102,7 +85,7 @@ jobs:
             size=$(stat -c%s "../release/geoip.dat")
             echo "--- Final size: $size bytes ---"
             if [ $size -le 1000 ]; then 
-              echo "ERROR: geoip.dat is too small! Something went wrong."
+              echo "ERROR: geoip.dat is too small! Check logs above."
               exit 1
             fi
           else
