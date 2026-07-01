@@ -1,9 +1,9 @@
-name: Build GeoIP Hydra Style
+name: Build GeoIP Manual Config
 on:
   workflow_dispatch:
   push:
     branches: [ master, main ]
-    paths: [ 'geoip/**' ]
+    paths: [ 'geoip/**', 'config.json' ]
 
 permissions:
   contents: write
@@ -28,13 +28,13 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Идеальная очистка IP через Python
+      # ШАГ 1: Очистка IP через Python (гарантия от пустого файла)
       - name: Clean IP files
         run: |
           python3 -c "
           import os, re
           src = 'main/geoip'
-          dst = 'builder/data_input'
+          dst = 'builder/data'
           os.makedirs(dst, exist_ok=True)
           for fname in os.listdir(src):
               if os.path.isdir(os.path.join(src, fname)): continue
@@ -53,29 +53,14 @@ jobs:
                   print(f'File {fname}: {len(cleaned)} IPs saved')
           "
 
-      # ШАГ 2: Генерация config.json (тип plaintext - это стандарт Loyalsoldier)
-      - name: Generate Config
-        run: |
-          cd builder
-          echo '{"input": [' > config.json
-          FIRST=true
-          for f in data_input/*; do
-            name=$(basename "$f")
-            if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            echo "{\"type\": \"plaintext\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"./data_input/$name\"}}" >> config.json
-          done
-          # Добавляем стандартный блок private и вывод
-          echo ',{"type": "private", "action": "add"}' >> config.json
-          echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
-          
-          echo "--- Generated config.json ---"
-          cat config.json
-
-      # ШАГ 3: Сборка
+      # ШАГ 2: Сборка с твоим config.json
       - name: Build geoip.dat
         run: |
+          # Копируем твой ручной конфиг в папку сборщика
+          cp main/config.json builder/config.json
+          
           cd builder
-          # Запускаем сборку через go run (как в hydraponique)
+          # Запускаем сборку
           go run ./ convert -c config.json
           
           # Проверка результата
@@ -84,8 +69,8 @@ jobs:
             cp output/dat/geoip.dat ../release/
             size=$(stat -c%s "../release/geoip.dat")
             echo "--- Final size: $size bytes ---"
-            if [ $size -le 1000 ]; then 
-              echo "ERROR: geoip.dat is too small! Check logs above."
+            if [ $size -le 700 ]; then 
+              echo "ERROR: geoip.dat is still empty (676 bytes)!"
               exit 1
             fi
           else
@@ -93,7 +78,7 @@ jobs:
             exit 1
           fi
 
-      # ШАГ 4: Публикация
+      # ШАГ 3: Публикация
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
