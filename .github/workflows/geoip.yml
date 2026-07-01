@@ -1,4 +1,4 @@
-name: Build GeoIP Final Fix
+name: Build GeoIP Hydra Style
 on:
   workflow_dispatch:
   push:
@@ -28,31 +28,33 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Подготовка файлов (копируем ПРЯМО в builder/data)
+      # ШАГ 1: Подготовка файлов (добавляем .txt и чистим)
       - name: Prepare IP files
         run: |
-          mkdir -p builder/data
-          echo "--- Cleaning and copying files ---"
-          for file in main/geoip/*; do
+          echo "--- Cleaning and adding .txt extension ---"
+          # Очищаем папку сборщика от лишнего, если нужно
+          find main/geoip -type f | while read file; do
             name=$(basename "$file")
-            # Удаляем только символы возврата каретки (Windows) и пустые строки
-            # Больше ничего не трогаем, чтобы не испортить формат
-            tr -d '\r' < "$file" | grep . > "builder/data/$name"
-            echo "File $name: $(wc -l < builder/data/$name) lines"
+            # Удаляем \r, комментарии и пробелы. Сохраняем как .txt
+            tr -d '\r' < "$file" | sed 's/#.*//g; s/[[:space:]]//g' | grep -v '^$' > "builder/${name}.txt"
+            echo "File ${name}.txt: $(wc -l < builder/${name}.txt) lines"
           done
 
-      # ШАГ 2: Генерация config.json (с локальными путями)
+      # ШАГ 2: Генерация config.json (в точности как у hydraponique)
       - name: Generate Config
         run: |
           cd builder
           echo '{"input": [' > config.json
           FIRST=true
-          # Генерируем список входов на основе файлов в папке data
-          for f in data/*; do
-            name=$(basename "$f")
+          # Перечисляем все созданные .txt файлы
+          for f in *.txt; do
+            # Имя тега (без .txt)
+            tag="${f%.txt}"
             if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"./data/$name\"}}" >> config.json
+            # Используем формат: тип text, имя тега, путь к .txt файлу
+            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"./$f\"}}" >> config.json
           done
+          # Вывод в формате v2rayGeoIPDat
           echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
           
           echo "--- Generated config.json ---"
@@ -62,7 +64,7 @@ jobs:
       - name: Build geoip.dat
         run: |
           cd builder
-          # Собираем бинарник (так надежнее)
+          # Собираем инструмент
           go build -o geoip_tool
           # Запускаем конвертацию
           ./geoip_tool convert -c config.json
@@ -74,11 +76,11 @@ jobs:
             size=$(stat -c%s "../release/geoip.dat")
             echo "--- Final size: $size bytes ---"
             if [ $size -le 700 ]; then 
-              echo "ERROR: geoip.dat is still empty (676 bytes). Check file content format!"
+              echo "ERROR: geoip.dat is still empty (676 bytes)!"
               exit 1
             fi
           else
-            echo "ERROR: output/dat/geoip.dat was not created!"
+            echo "ERROR: output/dat/geoip.dat not found!"
             exit 1
           fi
 
