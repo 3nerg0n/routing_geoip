@@ -13,6 +13,8 @@
     { "type": "text", "action": "add", "args": { "name": "VTB", "uri": "./data/VTB" } },
     { "type": "text", "action": "add", "args": { "name": "Vk-Mail", "uri": "./data/Vk-Mail" } },
     { "type": "text", "action": "add", "args": { "name": "Wildberries", "uri": "./data/Wildberries" } },
+    { "type": "text", "action": "add", "args": { "name": "Telegram", "uri": "./data/Telegram" } },
+    { "type": "text", "action": "add", "args": { "name": "YouTube", "uri": "./data/Youtube" } },
     { "type": "text", "action": "add", "args": { "name": "Yandex", "uri": "./data/Yandex" } },
     { "type": "private", "action": "add" }
   ],
