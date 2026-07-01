@@ -1,4 +1,4 @@
-name: Build GeoIP Hydra Style
+name: Build GeoIP Final Fix
 on:
   workflow_dispatch:
   push:
@@ -28,33 +28,42 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Подготовка файлов (добавляем .txt и чистим)
-      - name: Prepare IP files
+      # ШАГ 1: Идеальная очистка IP через Python
+      - name: Clean IP files with Python
         run: |
-          echo "--- Cleaning and adding .txt extension ---"
-          # Очищаем папку сборщика от лишнего, если нужно
-          find main/geoip -type f | while read file; do
-            name=$(basename "$file")
-            # Удаляем \r, комментарии и пробелы. Сохраняем как .txt
-            tr -d '\r' < "$file" | sed 's/#.*//g; s/[[:space:]]//g' | grep -v '^$' > "builder/${name}.txt"
-            echo "File ${name}.txt: $(wc -l < builder/${name}.txt) lines"
-          done
+          python3 -c "
+          import os, re
+          src = 'main/geoip'
+          dst = 'cleaned_geoip'
+          os.makedirs(dst, exist_ok=True)
+          for fname in os.listdir(src):
+              with open(os.path.join(src, fname), 'r') as f:
+                  lines = f.readlines()
+              cleaned = []
+              for line in lines:
+                  line = re.sub(r'#.*', '', line).strip() # Убрать комментарии и пробелы
+                  if not line: continue
+                  if '/' not in line: # Если нет маски, добавить /32
+                      if ':' in line: line += '/128' # Для IPv6
+                      else: line += '/32' # Для IPv4
+                  cleaned.append(line)
+              if cleaned:
+                  with open(os.path.join(dst, fname), 'w') as f:
+                      f.write('\n'.join(cleaned) + '\n')
+                  print(f'File {fname}: {len(cleaned)} IPs saved')
+          "
 
-      # ШАГ 2: Генерация config.json (в точности как у hydraponique)
+      # ШАГ 2: Генерация config.json (тип 'text' и абсолютные пути)
       - name: Generate Config
         run: |
-          cd builder
+          CLEANED_PATH=$(realpath cleaned_geoip)
           echo '{"input": [' > config.json
           FIRST=true
-          # Перечисляем все созданные .txt файлы
-          for f in *.txt; do
-            # Имя тега (без .txt)
-            tag="${f%.txt}"
+          for f in $CLEANED_PATH/*; do
+            name=$(basename "$f")
             if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            # Используем формат: тип text, имя тега, путь к .txt файлу
-            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"./$f\"}}" >> config.json
+            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"$f\"}}" >> config.json
           done
-          # Вывод в формате v2rayGeoIPDat
           echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
           
           echo "--- Generated config.json ---"
@@ -64,25 +73,15 @@ jobs:
       - name: Build geoip.dat
         run: |
           cd builder
-          # Собираем инструмент
           go build -o geoip_tool
-          # Запускаем конвертацию
-          ./geoip_tool convert -c config.json
+          ./geoip_tool convert -c ../config.json
           
           # Проверка результата
           mkdir -p ../release
-          if [ -f "output/dat/geoip.dat" ]; then
-            cp output/dat/geoip.dat ../release/
-            size=$(stat -c%s "../release/geoip.dat")
-            echo "--- Final size: $size bytes ---"
-            if [ $size -le 700 ]; then 
-              echo "ERROR: geoip.dat is still empty (676 bytes)!"
-              exit 1
-            fi
-          else
-            echo "ERROR: output/dat/geoip.dat not found!"
-            exit 1
-          fi
+          cp output/dat/geoip.dat ../release/
+          size=$(stat -c%s "../release/geoip.dat")
+          echo "--- Final size: $size bytes ---"
+          if [ $size -le 700 ]; then echo "ERROR: geoip.dat is still empty!"; exit 1; fi
 
       # ШАГ 4: Публикация
       - name: Release
