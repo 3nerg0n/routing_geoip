@@ -1,0 +1,28 @@
+{
+  "input": [
+    { "type": "text", "action": "add", "args": { "name": "AdBlock", "uri": "./data/AdBlock" } },
+    { "type": "text", "action": "add", "args": { "name": "AlfaBank", "uri": "./data/AlfaBank" } },
+    { "type": "text", "action": "add", "args": { "name": "Gos", "uri": "./data/Gos" } },
+    { "type": "text", "action": "add", "args": { "name": "Local", "uri": "./data/Local" } },
+    { "type": "text", "action": "add", "args": { "name": "Media", "uri": "./data/Media" } },
+    { "type": "text", "action": "add", "args": { "name": "Ozon", "uri": "./data/Ozon" } },
+    { "type": "text", "action": "add", "args": { "name": "RU", "uri": "./data/RU" } },
+    { "type": "text", "action": "add", "args": { "name": "SberBank", "uri": "./data/SberBank" } },
+    { "type": "text", "action": "add", "args": { "name": "Tinkoff", "uri": "./data/Tinkoff" } },
+    { "type": "text", "action": "add", "args": { "name": "Torrent", "uri": "./data/Torrent" } },
+    { "type": "text", "action": "add", "args": { "name": "VTB", "uri": "./data/VTB" } },
+    { "type": "text", "action": "add", "args": { "name": "Vk-Mail", "uri": "./data/Vk-Mail" } },
+    { "type": "text", "action": "add", "args": { "name": "Wildberries", "uri": "./data/Wildberries" } },
+    { "type": "text", "action": "add", "args": { "name": "Yandex", "uri": "./data/Yandex" } },
+    { "type": "private", "action": "add" }
+  ],
+  "output": [
+    {
+      "type": "v2rayGeoIPDat",
+      "action": "output",
+      "args": {
+        "outputName": "geoip.dat"
+      }
+    }
+  ]
+}
