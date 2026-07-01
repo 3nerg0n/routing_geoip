@@ -28,28 +28,29 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Подготовка файлов (простое копирование и удаление мусора)
+      # ШАГ 1: Подготовка файлов (копируем ПРЯМО в builder/data)
       - name: Prepare IP files
         run: |
           mkdir -p builder/data
-          echo "--- Copying and cleaning files ---"
+          echo "--- Cleaning and copying files ---"
           for file in main/geoip/*; do
             name=$(basename "$file")
-            # Удаляем символы Windows (\r) и пустые строки
-            tr -d '\r' < "$file" | grep -v '^$' > "builder/data/$name"
+            # Удаляем только символы возврата каретки (Windows) и пустые строки
+            # Больше ничего не трогаем, чтобы не испортить формат
+            tr -d '\r' < "$file" | grep . > "builder/data/$name"
             echo "File $name: $(wc -l < builder/data/$name) lines"
           done
 
-      # ШАГ 2: Генерация config.json (тип "text", без фильтров)
+      # ШАГ 2: Генерация config.json (с локальными путями)
       - name: Generate Config
         run: |
           cd builder
           echo '{"input": [' > config.json
           FIRST=true
+          # Генерируем список входов на основе файлов в папке data
           for f in data/*; do
             name=$(basename "$f")
             if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            # Используем тип "text" - это стандарт для Loyalsoldier
             echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"./data/$name\"}}" >> config.json
           done
           echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
@@ -61,14 +62,25 @@ jobs:
       - name: Build geoip.dat
         run: |
           cd builder
-          go run ./ convert -c config.json
+          # Собираем бинарник (так надежнее)
+          go build -o geoip_tool
+          # Запускаем конвертацию
+          ./geoip_tool convert -c config.json
           
           # Проверка результата
           mkdir -p ../release
-          cp output/dat/geoip.dat ../release/
-          size=$(stat -c%s "../release/geoip.dat")
-          echo "--- Final size: $size bytes ---"
-          if [ $size -le 700 ]; then echo "ERROR: geoip.dat is still empty!"; exit 1; fi
+          if [ -f "output/dat/geoip.dat" ]; then
+            cp output/dat/geoip.dat ../release/
+            size=$(stat -c%s "../release/geoip.dat")
+            echo "--- Final size: $size bytes ---"
+            if [ $size -le 700 ]; then 
+              echo "ERROR: geoip.dat is still empty (676 bytes). Check file content format!"
+              exit 1
+            fi
+          else
+            echo "ERROR: output/dat/geoip.dat was not created!"
+            exit 1
+          fi
 
       # ШАГ 4: Публикация
       - name: Release
