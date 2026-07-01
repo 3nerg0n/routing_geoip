@@ -28,43 +28,59 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Очистка IP и подготовка файлов (добавляем .txt)
-      - name: Prepare IP files
+      # ШАГ 1: Идеальная очистка файлов через Python
+      - name: Clean IP files
         run: |
-          mkdir -p builder/txt
-          echo "--- Cleaning and preparing files ---"
-          # Обрабатываем каждый файл из твоей папки geoip
-          for file in main/geoip/*; do
-            name=$(basename "$file")
-            # Удаляем мусор, пустые строки и символы Windows. Сохраняем как .txt
-            # Добавляем /32 только если это чистый IP без маски
-            sed 's/\r//g; s/#.*//g; s/[[:space:]]//g' "$file" | grep -v '^$' | \
-            sed -E 's/^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})$/\1\/32/' > "builder/txt/${name}.txt"
-            
-            echo "Processed $name -> txt/${name}.txt ($(wc -l < builder/txt/${name}.txt) lines)"
-          done
+          python3 -c "
+          import os, re
+          src = 'main/geoip'
+          dst = 'cleaned_txt'
+          os.makedirs(dst, exist_ok=True)
+          for fname in os.listdir(src):
+              if os.path.isdir(os.path.join(src, fname)): continue
+              with open(os.path.join(src, fname), 'r', encoding='utf-8') as f:
+                  lines = f.readlines()
+              cleaned = []
+              for line in lines:
+                  # Убираем комментарии, пробелы и невидимые символы
+                  line = re.sub(r'#.*', '', line).strip()
+                  if not line: continue
+                  # Добавляем /32 если это одиночный IP
+                  if '/' not in line:
+                      if ':' in line: line += '/128'
+                      else: line += '/32'
+                  cleaned.append(line)
+              if cleaned:
+                  with open(os.path.join(dst, fname + '.txt'), 'w', encoding='utf-8') as f:
+                      f.write('\n'.join(cleaned) + '\n')
+                  print(f'File {fname}: {len(cleaned)} IPs saved')
+          "
 
-      # ШАГ 2: Генерация config.json и сборка
-      - name: Build geoip.dat
+      # ШАГ 2: Генерация config.json с АБСОЛЮТНЫМИ путями
+      - name: Generate Config
         run: |
-          cd builder
-          # Генерируем конфиг с относительными путями
+          CLEANED_DIR=$(realpath cleaned_txt)
           echo '{"input": [' > config.json
           FIRST=true
-          for f in txt/*.txt; do
+          for f in $CLEANED_DIR/*.txt; do
             filename=$(basename "$f")
             tag="${filename%.txt}"
             if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"./txt/$filename\"}}" >> config.json
+            # Используем тип 'text' и абсолютный путь
+            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"$f\"}}" >> config.json
           done
           echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
           
           echo "--- Generated config.json ---"
           cat config.json
 
-          # Собираем и запускаем инструмент
+      # ШАГ 3: Сборка инструмента и запуск
+      - name: Build and Run
+        run: |
+          cd builder
           go build -o geoip_tool
-          ./geoip_tool convert -c config.json
+          # Запускаем конвертацию
+          ./geoip_tool convert -c ../config.json
           
           # Проверка результата
           mkdir -p ../release
@@ -73,8 +89,7 @@ jobs:
             size=$(stat -c%s "../release/geoip.dat")
             echo "--- Final size: $size bytes ---"
             if [ $size -le 700 ]; then 
-              echo "ERROR: geoip.dat is still empty! Check if files in builder/txt/ are valid."
-              ls -l txt/
+              echo "ERROR: geoip.dat is still empty (676 bytes)!"
               exit 1
             fi
           else
@@ -82,7 +97,7 @@ jobs:
             exit 1
           fi
 
-      # ШАГ 3: Публикация
+      # ШАГ 4: Публикация
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
