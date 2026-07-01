@@ -28,62 +28,61 @@ jobs:
         with:
           go-version: '>=1.21'
 
-      # ШАГ 1: Идеальная очистка IP через Python
-      - name: Clean IP files with Python
+      # ШАГ 1: Очистка IP и подготовка файлов (добавляем .txt)
+      - name: Prepare IP files
         run: |
-          python3 -c "
-          import os, re
-          src = 'main/geoip'
-          dst = 'cleaned_geoip'
-          os.makedirs(dst, exist_ok=True)
-          for fname in os.listdir(src):
-              with open(os.path.join(src, fname), 'r') as f:
-                  lines = f.readlines()
-              cleaned = []
-              for line in lines:
-                  line = re.sub(r'#.*', '', line).strip() # Убрать комментарии и пробелы
-                  if not line: continue
-                  if '/' not in line: # Если нет маски, добавить /32
-                      if ':' in line: line += '/128' # Для IPv6
-                      else: line += '/32' # Для IPv4
-                  cleaned.append(line)
-              if cleaned:
-                  with open(os.path.join(dst, fname), 'w') as f:
-                      f.write('\n'.join(cleaned) + '\n')
-                  print(f'File {fname}: {len(cleaned)} IPs saved')
-          "
+          mkdir -p builder/txt
+          echo "--- Cleaning and preparing files ---"
+          # Обрабатываем каждый файл из твоей папки geoip
+          for file in main/geoip/*; do
+            name=$(basename "$file")
+            # Удаляем мусор, пустые строки и символы Windows. Сохраняем как .txt
+            # Добавляем /32 только если это чистый IP без маски
+            sed 's/\r//g; s/#.*//g; s/[[:space:]]//g' "$file" | grep -v '^$' | \
+            sed -E 's/^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})$/\1\/32/' > "builder/txt/${name}.txt"
+            
+            echo "Processed $name -> txt/${name}.txt ($(wc -l < builder/txt/${name}.txt) lines)"
+          done
 
-      # ШАГ 2: Генерация config.json (тип 'text' и абсолютные пути)
-      - name: Generate Config
+      # ШАГ 2: Генерация config.json и сборка
+      - name: Build geoip.dat
         run: |
-          CLEANED_PATH=$(realpath cleaned_geoip)
+          cd builder
+          # Генерируем конфиг с относительными путями
           echo '{"input": [' > config.json
           FIRST=true
-          for f in $CLEANED_PATH/*; do
-            name=$(basename "$f")
+          for f in txt/*.txt; do
+            filename=$(basename "$f")
+            tag="${filename%.txt}"
             if [ "$FIRST" = true ]; then FIRST=false; else echo ',' >> config.json; fi
-            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$name\", \"uri\": \"$f\"}}" >> config.json
+            echo "{\"type\": \"text\", \"action\": \"add\", \"args\": {\"name\": \"$tag\", \"uri\": \"./txt/$filename\"}}" >> config.json
           done
           echo '], "output": [{"type": "v2rayGeoIPDat", "action": "output", "args": {"outputName": "geoip.dat"}}]}' >> config.json
           
           echo "--- Generated config.json ---"
           cat config.json
 
-      # ШАГ 3: Сборка
-      - name: Build geoip.dat
-        run: |
-          cd builder
+          # Собираем и запускаем инструмент
           go build -o geoip_tool
-          ./geoip_tool convert -c ../config.json
+          ./geoip_tool convert -c config.json
           
           # Проверка результата
           mkdir -p ../release
-          cp output/dat/geoip.dat ../release/
-          size=$(stat -c%s "../release/geoip.dat")
-          echo "--- Final size: $size bytes ---"
-          if [ $size -le 700 ]; then echo "ERROR: geoip.dat is still empty!"; exit 1; fi
+          if [ -f "output/dat/geoip.dat" ]; then
+            cp output/dat/geoip.dat ../release/
+            size=$(stat -c%s "../release/geoip.dat")
+            echo "--- Final size: $size bytes ---"
+            if [ $size -le 700 ]; then 
+              echo "ERROR: geoip.dat is still empty! Check if files in builder/txt/ are valid."
+              ls -l txt/
+              exit 1
+            fi
+          else
+            echo "ERROR: output/dat/geoip.dat not found!"
+            exit 1
+          fi
 
-      # ШАГ 4: Публикация
+      # ШАГ 3: Публикация
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
